@@ -1,21 +1,8 @@
-#include "demo.h"
+#include "pindown.h"
 
-//对hook函数进行填充，添加自己的逻辑（安全检查）,这里让它输出一条内核信息。
-static unsigned long long count1 = 0;
-static unsigned long long count2 = 0;
+//对hook函数进行填充，添加自己的逻辑（安全检查）
 
 //get the xattr value from inode
-char *get_inode_policy2(struct inode *inode, const char *name)
-{
-	char *pathname =
-		(char *)kzalloc(sizeof(char) * MAX_PATHLEN, GFP_KERNEL);
-	if (!pathname) {
-		return pathname;
-	}
-	pathname[0] = 's';
-	pathname[1] = '\0';
-	return pathname;
-}
 char *get_inode_policy(struct inode *inode, const char *name)
 {
 	struct dentry *dentry;
@@ -29,24 +16,20 @@ char *get_inode_policy(struct inode *inode, const char *name)
 	if (!dentry) {
 		return pathname;
 	}
-	(char *)kzalloc(sizeof(char) * MAX_PATHLEN, GFP_KERNEL);
+	pathname=(char *)kzalloc(sizeof(char) * MAX_PATHLEN, GFP_KERNEL);
 	if (!pathname) {
-		//dput(dentry);
+		dput(dentry);
 		return pathname;
 	}
-	rc = __vfs_getxattr(
-		dentry, inode, name, pathname,
-		MAX_PATHLEN *
-			sizeof(char)); //inode->i_op->getxattr(dentry,name,pathname,MAX_PATHLEN)
+        rc=__vfs_getxattr(dentry,inode,name,pathname,MAX_PATHLEN);
 	if (rc > 0) {
-		//dput(dentry);
-		//printk("Pindown: I get the inode_policy:%s\n", pathname);
+		dput(dentry);
 		return pathname;
 	}
-	/*
+	
     else if(rc==-ERANGE){
       rc=__vfs_getxattr(dentry,inode,name,NULL,0);  //get the real size
-      if(rc<0){
+      if(rc<=0){
         dput(dentry);
         kzfree(pathname);
         pathname=NULL;
@@ -62,7 +45,7 @@ char *get_inode_policy(struct inode *inode, const char *name)
       }
       rc=__vfs_getxattr(dentry,inode,name,pathname,len*sizeof(char));
       dput(dentry);
-      if(rc>=0){
+      if(rc>0){
         return pathname;
       }
       else{
@@ -72,9 +55,9 @@ char *get_inode_policy(struct inode *inode, const char *name)
       }
 
     }
-    */
+    
 	else {
-		//dput(dentry);
+		dput(dentry);
 		kzfree(pathname);
 		pathname = NULL;
 		return pathname;
@@ -83,7 +66,6 @@ char *get_inode_policy(struct inode *inode, const char *name)
 static int pindown_cred_alloc_blank(struct cred *cred, gfp_t gfp)
 {
 	struct pindown_security_t *tsec;
-	//printk("Pindown: call cred_alloc_blank,count=%llu\n", ++count2);
 	tsec = (pindown_security_t *)kzalloc(sizeof(struct pindown_security_t),
 					     gfp);
 	if (!tsec) {
@@ -93,21 +75,6 @@ static int pindown_cred_alloc_blank(struct cred *cred, gfp_t gfp)
 	return 0;
 }
 
-static int pindown_cred_alloc(struct cred *cred, gfp_t gfp)
-{
-	struct pindown_security_t *tsec;
-	if (!cred) {
-		return -ENOMEM;
-	}
-	//printk("Pindown: call cred_alloc\n");
-	tsec = (pindown_security_t *)kzalloc(sizeof(struct pindown_security_t),
-					     gfp);
-	if (!tsec) {
-		return -ENOMEM;
-	}
-	cred->security = tsec;
-	return 0;
-}
 
 static void pindown_cred_transfer(struct cred *new, const struct cred *old)
 {
@@ -117,7 +84,6 @@ static void pindown_cred_transfer(struct cred *new, const struct cred *old)
 	strcpy(new_tsp->bprm_pathname, old_tsp->bprm_pathname);
 	new_tsp->pathlen = old_tsp->pathlen;
 
-	/* cbs copy rule list */
 }
 
 int pindown_cred_prepare(struct cred *new, const struct cred *old, gfp_t gfp)
@@ -128,11 +94,11 @@ int pindown_cred_prepare(struct cred *new, const struct cred *old, gfp_t gfp)
 	new_tsp = (pindown_security_t *)kzalloc(
 		sizeof(struct pindown_security_t), gfp);
 	old_tsp = (pindown_security_t *)old->security;
+	new->security = new_tsp;
 	if (!new_tsp) {
 		return -ENOMEM;
 	}
-	//printk("Pindown: call cred_prepare,count=%llu\n", ++count2);
-
+	
 	if (!old_tsp || !old_tsp->bprm_pathname) {
 		new_tsp->bprm_pathname[0] = '\0';
 		new_tsp->pathlen = 0;
@@ -148,18 +114,13 @@ int pindown_cred_prepare(struct cred *new, const struct cred *old, gfp_t gfp)
 		new_tsp->pathlen = 0;
 		return -ENOMEM;
 	}
-	new->security = new_tsp;
+	
 
 	return 0;
 }
 
 void pindown_cred_free(struct cred *cred)
 {
-	/*printk("ZhangXin's demo: call pindown_cred_free\n");
-	if(!cred){
-	    return;
-	}
-	*/
 	struct pindown_security_t *tsp = (pindown_security_t *)cred->security;
 	if (tsp == NULL) {
 		return;
@@ -167,61 +128,55 @@ void pindown_cred_free(struct cred *cred)
 
 	cred->security = NULL;
 	kzfree(tsp); //In fact,it is security to call kzfree(NULL),too.
-
 	return;
 }
 
 
-int pindown_inode_permission2(struct inode *inode, int mask)
-{
-	return 0;
-}
 int pindown_inode_permission(struct inode *inode, int mask)
 {
 	//Initial default allow. Change to default deny once implemented
 	pindown_security_t *sec = NULL;
 	char *inode_policy = NULL; //string used to stroe the policy.
+	 struct task_struct *task=current;
+         kuid_t uid=task->cred->uid;
 	int rc;
 	//Don't check this if it is a directory.
 	if ((inode->i_mode & S_IFMT) == S_IFDIR) {
 		return 0;
 	}
+	//Allow it if the uid == 0
+	  if(uid.val==0)
+            { return 0;}
 	//get the file's xattr "security.pindown"
 	inode_policy = get_inode_policy(inode, "security.pindown");
 	if (!inode_policy) {
-		//printk("Pindown: No inode_policy");
 		return 0;
 	}
 
 	//Get the process security info.
-	sec = current->cred->security;
+	sec = task->cred->security;
 	if (!sec || sec->bprm_pathname[0] == '\0') {
 		//Do not allow a program to access a file if the program has not set the security field.
 
-		//printk(KERN_INFO
-		       "Pindown ERROR the inode_policy is %s  [ERRO:-EACCES]\n",
-		       inode_policy);
+		printk(KERN_ERR "Pindown ERROR! the inode_policy is %s  [ERRO:-EACCES]\n", inode_policy);
 		kzfree(inode_policy);
-		//inode_policy = NULL;
-		return 0; //-EACCES
+		inode_policy = NULL;
+		return -EACCES; //
 	}
-  
 	rc = strcmp(sec->bprm_pathname, inode_policy);
   //if equal(return 0), allow the access
 	if (!rc) {
-		printk(KERN_INFO
-		       "Pindown LSM check of %s allowing access,the inode policy is %s",
-		       sec->bprm_pathname, inode_policy);
+		printk(KERN_WARNING
+		       " Pindown LSM check of %s allowing access,the inode policy is %s",  sec->bprm_pathname, inode_policy);
 		kzfree(inode_policy);
-		//inode_policy = NULL;
+		inode_policy = NULL;
 		return 0;
 	} else {
-		printk(KERN_INFO
-		       "Pindown LSM check of %s denying access,the inode policy is %s",
-		       sec->bprm_pathname, inode_policy);
+		printk(KERN_ERR
+		       " Pindown LSM check of %s denying access,the inode policy is %s",  sec->bprm_pathname, inode_policy);
 		kzfree(inode_policy);
-		//inode_policy = NULL;
-		return 0; //-EACCES
+		inode_policy = NULL;
+		return -EACCES; //
 	}
 }
 /* Function: pindown_bprm_set_creds(@bprm)
@@ -234,46 +189,32 @@ int pindown_inode_permission(struct inode *inode, int mask)
  *  - set @current->security to the path of the binary
  *  - return 0 if the hook is successful and permission is granted
  */
-int pindown_bprm_set_creds2(struct linux_binprm *bprm)
-{
-	return 0;
-}
 int pindown_bprm_set_creds(
 	struct linux_binprm
 		*bprm) //bprm used by exec_binprm(bprm) to load a exe file
 {
-	//struct dentry *dentry = bprm->file->f_path.dentry;
-	//struct inode *inode = d_backing_inode(dentry);
 	struct pindown_security_t *bsp = bprm->cred->security;
-	int rc = 0;
 	//printk(KERN_INFO "ZhangXin's demo call:pindown_bprm_set_security.\n");
 	if (bprm->called_set_creds) //True after the bprm_set_creds hook has been called once
-		 return 0;
-	//printk("Pindown: I'm tring to set creds for %s\n",bprm->filename);
-	if (bsp == NULL) {
-    /*
-		rc = pindown_cred_alloc(bprm->cred, GFP_KERNEL_ACCOUNT);
-		if (rc) {
-			return rc;
-		}*/
-    return 0;
+		return 0;
+	if (!bprm ||!bprm->cred || !bsp) {
+              return 0;
 	}
 
-	if (!bprm || !bprm->filename) {
+	if (!bprm->filename) {
 		bsp->bprm_pathname[0] = '\0';
+		bsp->pathlen=0;
 		return 0;
-		//sec->pathlen=0;
 	}
 	//printk(KERN_INFO "ZhangXin's demo: BINARY %s.\n",bprm->filename);
-	if (strlen(bprm->filename) < MAX_PATHLEN) {
-    strcpy(bsp->bprm_pathname, bprm->filename);
-    return 0;
+	if (strlen(bprm->filename) > MAX_PATHLEN) {
+		bsp->bprm_pathname[0] = '\0';
+		bsp->pathlen=0;
+		return 0;
 	}
-	bsp->bprm_pathname[0] = '\0';
+	strcpy(bsp->bprm_pathname, bprm->filename);
+	bsp->pathlen=strlen(bprm->filename);
 
-	// if(sec->pathlen>=MAX_PATHLEN){
-	//   rc=-ENOMEM;
-	//  }
 
 	return 0;
 }
